@@ -615,7 +615,7 @@ int main() {
     
 
 3. **How does NachOS create and manage the page table?**  
-    在 Implementation Part 已經說明。
+    原本的方法是在 AddrSpace 的建構子就開一個和 physical frames 一樣多的 page table，我們將其修改成按照大小分配 frames 的數量。在 thread 被刪除時會呼叫 AddrSpace 的解構子，在裡面會把原本分配給那條 thread 的 frames 還原回去。
 
 4. **How does NachOS translate addresses?**  
     NachOS uses a page table to translate virtual addresses to physical addresses, enabling processes to work within their own address spaces independently.
