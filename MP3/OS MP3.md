@@ -319,7 +319,7 @@ SWITCH:
         movl    _ESP(%eax),%esp         # restore stack pointer
 ```
 
-接著將原本存放在 memory 裡面 thread 2 所有 register 的 state load 回來，並且把 return 到的位址放在 `%eax`。其中，`_ESP(%eax)` 實際上是Thread t2 的 stackTop，因此現在的 `%esp` 會指向這一塊記憶體
+接著將原本存放在 memory 裡面 thread 2 所有 register 的 state load 回來，並且把 return 到的位址放在 `%eax`。其中，`_ESP(%eax)` 實際上是Thread t2 的 stackTop，因此現在的 `%esp` 會指向這一塊記憶體 (以 Ｔhread t2 為 new thread 為例) 
 
 ![image](https://hackmd.io/_uploads/HyyC515X1x.png)
 ```
@@ -354,7 +354,7 @@ ThreadRoot:
 ![image](https://hackmd.io/_uploads/S12vsJ9mkg.png)
 ![image](https://hackmd.io/_uploads/ryrCj19mJx.png)
 
-Call `StartupPC`，會 push 下一個指令位址，`StartupPC` 在 `threads/switch.h`，定義為 `%ecx`。在前面 `SWITCH` 中，`%ecx` 的值為 Thread t2 的 `machineState[ECX]`。而 Thread t2 的 `machineState[ECX]` 的值在 `StackAllocate()` 中有設定 `machineState[StartupPCState] = (void *)ThreadBegin;`，所以現在會呼叫 `ThreadBegin` : `static void ThreadBegin() { kernel->currentThread->Begin(); }`。`kernel->currentThread` 現在為 Thread t2，所以會呼叫 Thread t2 的 `Begin()`。在執行 `Thread::Begin()` 中 : `kernel->scheduler->CheckToBeDestroyed()`，Thread t1 在此被砍掉。
+Call `StartupPC`，會 push 下一個指令位址，`StartupPC` 在 `threads/switch.h`，定義為 `%ecx`。在前面 `SWITCH` 中，`%ecx` 的值為 Thread t2 的 `machineState[ECX]`。而 Thread t2 的 `machineState[ECX]` 的值在 `StackAllocate()` 中有設定 `machineState[StartupPCState] = (void *)ThreadBegin;`，所以現在會呼叫 `ThreadBegin` : `static void ThreadBegin() { kernel->currentThread->Begin(); }`。`kernel->currentThread` 現在為 Thread t2，所以會呼叫 Thread t2 的 `Begin()`。在執行 `Thread::Begin()` 中 : `kernel->scheduler->CheckToBeDestroyed()`，若Thread t1 的工作已結束則在此被砍掉。
 
 ![image](https://hackmd.io/_uploads/SkTCo1cmJg.png)
 
