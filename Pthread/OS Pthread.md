@@ -190,11 +190,7 @@ void* Writer::process(void* arg) {
 
 ### Different values of CONSUMER_CONTROLLER_CHECK_PERIOD
 #### Discussion
-- 大 check period
-    - consumer 更加貼近 item
-    - 可以降低 run time
-
-大到一定程度會造成一直在建立或刪除 consumer，不一定會減少時間。
+減少 check period time 可以更及時的分配資源，因此可以增快執行速度，但是太過頻繁的檢查並調度也會花費更多的時間，因此可以在 test 01 1/10 times check period 的測試中看到，其執行速度沒有比 1/2 times check period 的速度更快，因此 check period time 應該是有一個最佳表現區間，太大或太小都會導致執行速度低落。
 #### Result
 - **test 00**
 
@@ -227,7 +223,7 @@ void* Writer::process(void* arg) {
 ### Different values of CONSUMER_CONTROLLER_LOW_THRESHOLD_PERCENTAGE and CONSUMER_CONTROLLER_HIGH_THRESHOLD_PERCENTAGE
 
 #### Discussion
-？？？？？
+從 test 00 看起來，較小的 min threshold 與較小的 max threshold 執行速度更快，但當數量放大之後，從 test 01 的結果可以看出，這兩個 threshold 的設置對於執行速度上的影響甚微。
 #### Result
 - **test 00**
 
@@ -261,7 +257,7 @@ void* Writer::process(void* arg) {
 ### Different values of WORKER_QUEUE_SIZE
 
 #### Discussion
-？？？？？
+Worker queue size 設定的大一點，雖然能增加處理更多 items 的能力，但當 work queue size 太大的時候會導致 consumer controler 沒有創建 consumer 或是 consumer 數量增長延遲的情況。
 #### Result
 - **test 00**
 
@@ -289,13 +285,17 @@ void* Writer::process(void* arg) {
 ### What happens if WRITER_QUEUE_SIZE is very small?
 
 #### Discussion
-？？？？？
+:::warning
+好像不會怎樣？
+:::
 #### Result
 ![picture 1](Pictures/21.png)
 
 ### What happens if READER_QUEUE_SIZE is very small?
 
 #### Discussion
-？？？？？
+:::warning
+好像不會怎樣？
+:::
 #### Result
 ![picture 1](Pictures/22.png)
