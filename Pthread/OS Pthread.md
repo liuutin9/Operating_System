@@ -63,10 +63,10 @@ int main(int argc, char** argv) {
 }
 
 ```
-首先根據設置好的queue_size宣告reader_queue, worker_queue 以及 output_queue。接著創建 Reader, Producers, Consumer_controller 以及 Writer，依序開始執行。最後等待 Reader 及 Writer 執行結束並釋放資源。
+首先根據設置好的 queue_size 宣告 reader_queue, worker_queue 以及 output_queue。接著創建 Reader, Producers, Consumer_controller 以及 Writer，依序開始執行。最後等待 Reader 及 Writer 執行結束並釋放資源。
 ### Ts_Queue
 #### TSQueue<T\>::TSQueue
-TSQueue的建構子，初始化各個變數。
+TSQueue的建構子，設置各個變數的初始值，並初始化互斥鎖及 conditional variables。
 ```cpp
 template <class T>
 TSQueue<T>::TSQueue(int buffer_size) : buffer_size(buffer_size) {
@@ -83,7 +83,7 @@ TSQueue<T>::TSQueue(int buffer_size) : buffer_size(buffer_size) {
 ```
     
 #### TSQueue<T\>::~TSQueue
-TSQueue的解構子，釋放各個變數的資源。
+TSQueue的解構子，釋放各個變數的資源並銷毀互斥鎖及 conditional variable。
 ```cpp
 template <class T>
 TSQueue<T>::~TSQueue() {
@@ -96,7 +96,7 @@ TSQueue<T>::~TSQueue() {
 ```
 
 #### TSQueue<T\>::enqueue
-首先,取得 lock 以避免其他 threads 同時對 queue 進行操作。若 queue 為滿的狀態，則呼叫 pthread_cond_wait(&this->cond_enqueue, &this->mutex)，等待其他 threads 進行 dequeue 後 signal。若 queue 仍有空間，則將 item 放入最後端(head處)，並更新 size 及 head 的值(這邊採用的是 circular queue)。
+首先,取得 lock 以避免其他 threads 同時對 queue 進行操作。若 queue 為滿的狀態，則呼叫 pthread_cond_wait(&this->cond_enqueue, &this->mutex)，等待其他 threads 進行 dequeue 後的 signal。若 queue 仍有空間，則將 item 放入最後端(head處)，並更新 size 及 head 的值(這邊採用的是 circular queue)。enqueue 的操作結束後呼叫 pthread_cond_signal，喚醒正在 waiting cond_dequeue 的 thread (現在的 queue 裡有 item 可以做 dequeue 了)。接著使用 pthread_mutex_unlock 釋放互斥鎖，讓其他 threads 得以存取 queue。
 ```cpp
 template <class T>
 void TSQueue<T>::enqueue(T item) {
@@ -114,7 +114,7 @@ void TSQueue<T>::enqueue(T item) {
 ```
 
 #### TSQueue<T\>::dequeue
-首先,取得 lock 以避免其他 threads 同時對 queue 進行操作。若 queue 為空，則呼叫 pthread_cond_wait(&this->cond_dequeue, &this->mutex)，等待其他 threads 進行 enqueue 後 signal。若仍有 items 在 queue 之中，則將最前端的 item 取出(tail處)，更新 size 及 tail 的值(這邊採用的是 circular queue)，最後將取出的 item 回傳。
+首先，使用 pthread_mutex_lock 取得 lock 以避免其他 threads 同時對 queue 進行操作。若 queue 為空，則呼叫 pthread_cond_wait(&this->cond_dequeue, &this->mutex)，等待其他 threads 進行 enqueue 後的 signal。若仍有 items 在 queue 之中，則將最前端的 item 取出(tail處)，更新 size 及 tail 的值(這邊採用的是 circular queue)，最後將取出的 item 回傳。dequeue 的操作結束後呼叫 pthread_cond_signal，喚醒正在 waiting cond_enqueue 的 thread (現在的 queue 有空間可以做 enqueue 了)。接著使用 pthread_mutex_unlock 釋放互斥鎖，讓其他 threads 得以存取 queue。
 ```cpp
 template <class T>
 TSQueue<T>::dequeue() {
@@ -133,7 +133,7 @@ TSQueue<T>::dequeue() {
 ```
 
 #### TSQueue<T\>::get_size
-回傳 private 變數 size，用以取得目前 queue 中 item 的數量。
+回傳 private 變數 size，用以取得目前 queue 中 item 的數量。使用 pthread_mutex_lock 取得互斥鎖，以避免其他 threads 同時對 size 進行操作。結束後使用 pthread_mutex_unlock 釋放互斥鎖，讓其他 threads 得以存取 size。
 ```cpp
 template <class T>
 int TSQueue<T>::get_size() {
@@ -146,8 +146,19 @@ int TSQueue<T>::get_size() {
 ```
 
 ### Reader
-#### No implement
-根據 expected_lines，依次從檔案流(ifs)中讀取指定行數的資料。為每一行資料動態分配一個 Item 物件，並將初始化完成的 Item 放入input_queue，供後續處理使用(enqueue)。
+#### Reader::start
+創建執行 Reader::process 的 Reader thread，其中:
+參數 1: &t 是執行緒變數，儲存新建立的執行緒 ID。
+參數 2: 0 表示使用預設的執行緒屬性。
+參數 3: Reader::process 是執行緒的起始函數。
+參數 4: (void*)this 將當前物件的指標傳遞給執行緒函數。
+```cpp
+void Reader::start() {
+    pthread_create(&t, 0, Reader::process,(void*)this);
+}
+```
+#### Reader::process
+根據 expected_lines，依次從檔案流(ifs)中讀取指定行數的資料。為每一行資料動態分配一個 Item 物件，並將初始化完成的 Item 放入 input_queue，供後續處理使用(enqueue)。
 ```cpp
 void* Reader::process(void* arg) {
     Reader* reader = (Reader*)arg;
@@ -201,7 +212,7 @@ void ConsumerController::start() {
 ```
 
 #### ConsumerController::process
-每 CONSUMER_CONTROLLER_CHECK_PERIOD 微秒檢查一次 worker_queue 的狀態。如果 worker_queue 中 item 的數量超過 high_threshold(%)，則創建一個新的 Consumer thread 來處理工作。反之，如果 worker_queue 中 item 的數量低於 low_threshold(%)，則將最新創建的 Consumer thread 砍掉（透過呼叫 Consumer->cancel 方法），此時須確保至少仍有一個 Consumer 在運作。其中，我們使用 ConsumerController::consumers  來紀錄目前正在執行的 Consumer 清單，確保其狀態正確。
+每 CONSUMER_CONTROLLER_CHECK_PERIOD 微秒檢查一次 worker_queue 的狀態。如果 worker_queue 中 item 的數量超過 high_threshold(%)，則創建一個新的 Consumer thread 來處理工作。反之，如果 worker_queue 中 item 的數量低於 low_threshold(%)，則將最新創建的 Consumer thread 砍掉（透過呼叫 Consumer->cancel 方法），此時須確保至少仍有一個 Consumer 在運作。其中，我們使用 ConsumerController::consumers  來紀錄目前正在執行的 Consumer 清單。
 ```cpp
 void* ConsumerController::process(void* arg) {
     // Cast the argument to ConsumerController
@@ -247,7 +258,7 @@ void* ConsumerController::process(void* arg) {
 
 ### Consumer
 #### Consumer::start
-創建執行 Consumer::process 的 consumer thread
+創建執行 Consumer::process 的 Consumer thread
 ```cpp
 void Consumer::start() {
     // TODO: starts a Consumer thread
@@ -256,7 +267,7 @@ void Consumer::start() {
 ```
 
 #### Consumer::cancel
-將 consumer 中的 is_cancel 設為 true，代表該 consumer 即將被砍掉。
+將 Consumer 中的 is_cancel 設為 true，代表該 Consumer 即將被砍掉。
 ```cpp
 int Consumer::cancel() {
     is_cancel = true;
@@ -265,13 +276,13 @@ int Consumer::cancel() {
 ```
 
 #### Consumer::process
-將 thread 的取消型態設定為「延遲型」（PTHREAD_CANCEL_DEFERRED），表示 thread 僅在安全點（如 pthread_testcancel）檢查取消請求。
+將此 Consumer thread 的取消型態設定為「延遲型」（PTHREAD_CANCEL_DEFERRED），表示 thread 僅在安全點（如 pthread_testcancel）檢查取消請求。
 
-在 consumer 處理工作項目時(consumer->is_cancel == false)禁用取消狀態，確保工作不會在處裡過程中因 thread 被取消而被中斷。
+若 consumer->is_cancel 為 true ，則不再執行，並將此 consumer thread 刪除。
+
+若 consumer->is_cancel 為 false，則將 此 Consumer thread 設為不能取消的狀態，確保工作不會在處裡過程中因此 Consumer thread 被取消而被中斷。從 worker_queue 中 dequeue，取出最前端的item。接著將 item->opcode 及 item->val 傳入 consumer_transform 並將 item->val 更新為回傳值。最後，將 item 放入 output_queue 中(enqueue)。
     
-若 consumer->is_cancel 為 false，則從 worker_queue 中 dequeue，取出最前端的item。接著將 item->opcode 及 item->val 傳入 consumer_transform 並將 item->val 更新為回傳值。最後，將 item 放入 output_queue 中(enqueue)。
-    
-在完成工作邏輯後將 thread 恢復到可以取消的狀態，使其能夠接收取消請求。
+在完成工作邏輯後將此 Consumer thread 恢復到可以取消的狀態，使其能夠接收取消請求。
 ```cpp
 void* Consumer::process(void* arg) {
     Consumer* consumer = (Consumer*)arg;
@@ -292,7 +303,7 @@ void* Consumer::process(void* arg) {
 ### Writer
 
 #### Writer::start
-創建執行 Writer::process 的 writer thread
+創建執行 Writer::process 的 Writer thread
 ```cpp
 void Writer::start() {
     // TODO: starts a Writer thread
@@ -301,7 +312,7 @@ void Writer::start() {
 ```
 
 #### Writer::process
-從 output_queue 中 dequeue，取出最前端的item。接著將 item 傳入輸出流(ofs)中輸出。
+從 output_queue 中 dequeue，取出最前端的item。接著將該 item 傳入輸出流(ofs)中輸出，並將該 item 刪除，釋放資源。
 ```cpp
 void* Writer::process(void* arg) {
     // TODO: implements the Writer's work
@@ -424,24 +435,26 @@ Worker queue size 設定的大一點，雖然能增加處理更多 items 的能�
     ![picture 3](Pictures/20.png)
 
 ### What happens if WRITER_QUEUE_SIZE is very small?
-1/4 times original writer queue size
+1/100 times original writer queue size
 #### Discussion
-:::warning
-好像不會怎樣？
-:::
+
+The Consumer will frequently block while attempting to enqueue data into the output_queue when it becomes full. The Consumer will need to wait for the Writer to process data and free up space.
+It might becomes a bottleneck due to its small size, the overall throughput of the system will decrease.
+
 #### Result
 ![picture 1](Pictures/21.png)
 
 ### What happens if READER_QUEUE_SIZE is very small?
-1/4 times original reader queue size
+1/10 times original reader queue size
 #### Discussion
-:::warning
-好像不會怎樣？
-:::
+The Reader will frequently block while attempting to enqueue data to the input_queue from the input source when it becomes full. It will need to wait for the Producer to process data and free up space.
+It might becomes a bottleneck due to its small size, the overall throughput of the system will decrease. 
+
 #### Result
 ![picture 1](Pictures/22.png)
     
 ## What difficulties did you encounter when implementing this assignment?
-    
-## feedback
+At first, I was uncertain about when to shut down the Producers, Consumers and the Consumer Controller. Unlike the Reader and Writer, which have a specific number of tasks to complete, they don't have a clearly defined stopping point. Initially, I considered using a flag to indicate when the Reader had finished its job. This flag would allow the Producers to shut down once the input queue was empty. However, after discussing with my peers, we realized that this was unnecessary. The program will naturally terminate once both the reader and writer finish their tasks, ensuring that all threads, including the consumers, shut down properly.
         
+## Feedback
+這份 Pthread 跟 MP4 有點像，因為描述得比較少的關係，一開始要怎麼做真的毫無頭緒，不過做完之後其實覺得不會很難，但就還是會擔心有沒有什麼東西不符合 spec 的要求。
